@@ -829,6 +829,95 @@ def get_supported_languages_md():
     return res
 
 
+import json
+
+def generate_repomap_json(directory_path):
+    if not os.path.exists(directory_path):
+        raise FileNotFoundError(f"Directory not found: {directory_path}")
+    if not os.path.isdir(directory_path):
+        raise ValueError(f"Path is not a directory: {directory_path}")
+
+    root_name = os.path.basename(directory_path)
+    root_abs_path = os.path.abspath(directory_path)
+
+    def _build_node(current_path):
+        name = os.path.basename(current_path)
+        abs_path = os.path.abspath(current_path)
+
+        if os.path.isdir(current_path):
+            node = {
+                "name": name,
+                "path": abs_path,
+                "type": "directory",
+                "children": []
+            }
+            # Ensure os.listdir results are sorted for consistent output, helpful for testing
+            try:
+                entries = sorted(os.listdir(current_path))
+            except OSError: # Permission denied, etc.
+                return node # Return directory node with empty children if unreadable
+
+            for entry in entries:
+                entry_path = os.path.join(current_path, entry)
+                # Recursively build nodes for children, handling potential errors
+                try:
+                    child_node = _build_node(entry_path)
+                    if child_node: # Only add if child_node is not None (e.g. due to permission errors deeper)
+                         node["children"].append(child_node)
+                except (FileNotFoundError, ValueError):
+                    # Skip files/dirs that disappear or become invalid during traversal
+                    pass
+            return node
+        elif os.path.isfile(current_path):
+            return {
+                "name": name,
+                "path": abs_path,
+                "type": "file"
+            }
+        return None # Should not happen if path exists and is either dir or file
+
+    # For the root of the repomap, we want its own name, not the parent directory's name
+    # So we call _build_node directly with directory_path
+
+    # Correction: The root of the JSON should represent the initial directory_path itself
+    # The _build_node was designed to be called recursively for items *within* a directory.
+    # We need a slightly different setup for the very first call.
+
+    if os.path.isdir(directory_path):
+        repomap_root = {
+            "name": os.path.basename(directory_path),
+            "path": os.path.abspath(directory_path),
+            "type": "directory",
+            "children": []
+        }
+        try:
+            entries = sorted(os.listdir(directory_path))
+        except OSError: # Handle cases where the root directory itself is unreadable
+             return json.dumps(repomap_root, indent=2)
+
+
+        for entry in entries:
+            entry_path = os.path.join(directory_path, entry)
+            try:
+                child_node = _build_node(entry_path) # _build_node is fine for children
+                if child_node:
+                    repomap_root["children"].append(child_node)
+            except (FileNotFoundError, ValueError):
+                pass # Skip children that are problematic
+        return json.dumps(repomap_root, indent=2)
+    else:
+        # This case should be caught by the initial checks, but as a safeguard:
+        # If it's a file, the repomap is just that file.
+        # However, the original request implies the input is a *directory*.
+        # The ValueError above should handle this.
+        # For robustness, if it somehow gets here as a file:
+        return json.dumps({
+            "name": os.path.basename(directory_path),
+            "path": os.path.abspath(directory_path),
+            "type": "file"
+        }, indent=2)
+
+
 if __name__ == "__main__":
     fnames = sys.argv[1:]
 
