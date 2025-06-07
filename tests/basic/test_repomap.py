@@ -8,9 +8,10 @@ from pathlib import Path
 import git
 
 from aider.dump import dump  # noqa: F401
+import json
 from aider.io import InputOutput
 from aider.models import Model
-from aider.repomap import RepoMap
+from aider.repomap import RepoMap, generate_repomap_json
 from aider.utils import GitTemporaryDirectory, IgnorantTemporaryDirectory
 
 
@@ -489,6 +490,89 @@ class TestRepoMapAllLanguages(unittest.TestCase):
 
         # If we reach here, the maps are identical
         self.assertEqual(generated_map_str, expected_map, "Generated map matches expected map")
+
+    def test_generate_repomap_json_basic_structure(self):
+        with IgnorantTemporaryDirectory() as temp_dir_path_str:
+            temp_dir = Path(temp_dir_path_str)
+
+            # Create structure
+            (temp_dir / "file1.txt").write_text("content1")
+            subdir1 = temp_dir / "subdir1"
+            subdir1.mkdir()
+            (subdir1 / "file2.py").write_text("content2")
+            empty_subdir = temp_dir / "empty_subdir"
+            empty_subdir.mkdir()
+
+            # Expected structure
+            expected_json = {
+                "name": temp_dir.name,
+                "path": str(temp_dir.resolve()),
+                "type": "directory",
+                "children": [
+                    {
+                        "name": "empty_subdir",
+                        "path": str((temp_dir / "empty_subdir").resolve()),
+                        "type": "directory",
+                        "children": []
+                    },
+                    {
+                        "name": "file1.txt",
+                        "path": str((temp_dir / "file1.txt").resolve()),
+                        "type": "file"
+                    },
+                    {
+                        "name": "subdir1",
+                        "path": str((temp_dir / "subdir1").resolve()),
+                        "type": "directory",
+                        "children": [
+                            {
+                                "name": "file2.py",
+                                "path": str((subdir1 / "file2.py").resolve()),
+                                "type": "file"
+                            }
+                        ]
+                    }
+                ]
+            }
+            # Sort children in the expected output to match implementation
+            expected_json["children"] = sorted(expected_json["children"], key=lambda x: x["name"])
+            # Find 'subdir1' and sort its children
+            for child_dict in expected_json["children"]:
+                if child_dict["name"] == "subdir1" and "children" in child_dict:
+                    child_dict["children"] = sorted(child_dict["children"], key=lambda x: x["name"])
+                    break
+
+            result_str = generate_repomap_json(str(temp_dir))
+            result_json = json.loads(result_str)
+
+            self.assertEqual(result_json, expected_json)
+
+    def test_generate_repomap_json_empty_dir(self):
+        with IgnorantTemporaryDirectory() as temp_dir_path_str:
+            temp_dir = Path(temp_dir_path_str)
+            expected_json = {
+                "name": temp_dir.name,
+                "path": str(temp_dir.resolve()),
+                "type": "directory",
+                "children": []
+            }
+            result_str = generate_repomap_json(str(temp_dir))
+            result_json = json.loads(result_str)
+            self.assertEqual(result_json, expected_json)
+
+    def test_generate_repomap_json_file_not_found(self):
+        non_existent_path = os.path.join("some_hopefully_non_existent_dir_abc123", "non_existent_file_xyz789")
+        with self.assertRaises(FileNotFoundError):
+            generate_repomap_json(non_existent_path)
+
+    def test_generate_repomap_json_path_is_file(self):
+        with IgnorantTemporaryDirectory() as temp_dir_path_str:
+            temp_dir = Path(temp_dir_path_str)
+            file_path = temp_dir / "just_a_file.txt"
+            file_path.write_text("I am a file.")
+
+            with self.assertRaises(ValueError):
+                generate_repomap_json(str(file_path))
 
 
 if __name__ == "__main__":
